@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.streamlit/secrets.toml
+results/*.png
+results/*.csv
+*.egg-info/
+.venv/
+venv/
+.env
