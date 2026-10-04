@@ -5,6 +5,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Strict Times New Roman font enforcement across all charts
+plt.rcParams["font.family"] = "serif"
+plt.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif", "serif"]
+
 
 def plot_bfsk_waveform(time_axis: np.ndarray, signal: np.ndarray, title: str = "BFSK Modulated Signal"):
     fig, ax = plt.subplots(figsize=(9, 3.5))

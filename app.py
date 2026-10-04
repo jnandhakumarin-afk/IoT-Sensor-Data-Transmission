@@ -86,6 +86,12 @@ def init_session_state():
         st.session_state.splash_time = time.time() + 1.2
 
 
+def render_html(html_str: str) -> None:
+    """Safely render HTML without CommonMark treating indented blocks or blank lines as code blocks."""
+    cleaned = " ".join(line.strip() for line in html_str.strip().splitlines() if line.strip())
+    st.markdown(cleaned, unsafe_allow_html=True)
+
+
 def inject_custom_css():
     st.markdown(
         """
@@ -136,6 +142,80 @@ def inject_custom_css():
             background: linear-gradient(180deg, #071324 0%, #040A14 100%) !important;
             border-right: 1px solid rgba(0, 168, 255, 0.22) !important;
             box-shadow: 4px 0 24px rgba(0, 0, 0, 0.6) !important;
+        }
+
+        /* ========================================================
+           SIDEBAR TOGGLE ARROW FIX - REPLACES key_double... WITH « / »
+           ======================================================== */
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapseButton"] button,
+        [data-testid="collapsedControl"] button,
+        button[data-testid="baseButton-headerNoPadding"],
+        button[aria-label*="sidebar" i],
+        button[aria-label*="Sidebar" i] {
+            position: relative !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            background: rgba(0, 168, 255, 0.12) !important;
+            border: 1px solid rgba(0, 168, 255, 0.35) !important;
+            border-radius: 8px !important;
+            min-width: 2.2rem !important;
+            height: 2.2rem !important;
+            cursor: pointer !important;
+            transition: all 0.2s ease !important;
+        }
+
+        [data-testid="stSidebarCollapseButton"] button:hover,
+        [data-testid="collapsedControl"] button:hover,
+        button[aria-label*="sidebar" i]:hover {
+            background: rgba(0, 168, 255, 0.25) !important;
+            border-color: #00D9FF !important;
+            box-shadow: 0 0 12px rgba(0, 217, 255, 0.35) !important;
+        }
+
+        /* Completely hide the raw text ligature like keyboard_double_arrow_left */
+        [data-testid="stSidebarCollapseButton"] button > *,
+        [data-testid="collapsedControl"] button > *,
+        button[aria-label*="sidebar" i] > * {
+            font-size: 0px !important;
+            color: transparent !important;
+            visibility: hidden !important;
+            width: 0 !important;
+            height: 0 !important;
+            line-height: 0 !important;
+            overflow: hidden !important;
+            display: none !important;
+        }
+
+        /* Inject clean, glowing cyan double arrow « (collapse sidebar) */
+        [data-testid="stSidebarCollapseButton"] button::after,
+        button[aria-label*="close sidebar" i]::after,
+        button[aria-label*="collapse sidebar" i]::after {
+            content: "«" !important;
+            font-size: 1.45rem !important;
+            font-weight: 700 !important;
+            color: #00D9FF !important;
+            visibility: visible !important;
+            line-height: 1 !important;
+            display: block !important;
+            font-family: 'Times New Roman', Times, serif !important;
+        }
+
+        /* Inject clean, glowing cyan double arrow » (expand sidebar) */
+        [data-testid="collapsedControl"]::after,
+        [data-testid="collapsedControl"] button::after,
+        button[aria-label*="open sidebar" i]::after,
+        button[aria-label*="expand sidebar" i]::after {
+            content: "»" !important;
+            font-size: 1.45rem !important;
+            font-weight: 700 !important;
+            color: #00D9FF !important;
+            visibility: visible !important;
+            line-height: 1 !important;
+            display: block !important;
+            font-family: 'Times New Roman', Times, serif !important;
         }
 
         /* Sidebar Radio Navigation Items */
@@ -295,7 +375,7 @@ def inject_custom_css():
 
 
 def show_splash_screen():
-    st.markdown(
+    render_html(
         f"""
         <div style="min-height: 82vh; display:flex; align-items:center; justify-content:center; text-align:center;">
             <div style="
@@ -321,8 +401,7 @@ def show_splash_screen():
                 </div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
     time.sleep(0.3)
 
@@ -358,77 +437,76 @@ def run_full_simulation():
 
     bitstream = combine_sensor_bits(temperature, humidity)
     st.session_state.binary_data = bitstream
-    st.session_state.timestamp = formatted_timestamp()
 
-    signal, time_axis, _ = generate_bfsk_signal(
-        bitstream,
-        st.session_state.f0,
-        st.session_state.f1,
-        st.session_state.bit_rate,
-        st.session_state.sampling_rate,
+    modulated_signal, time_axis, samples_per_bit = generate_bfsk_signal(
+        bitstream=bitstream,
+        f0=float(st.session_state.f0),
+        f1=float(st.session_state.f1),
+        bit_rate=float(st.session_state.bit_rate),
+        sampling_rate=float(st.session_state.sampling_rate),
     )
-    st.session_state.modulated_signal = signal
+    st.session_state.modulated_signal = modulated_signal
 
-    st.session_state.noisy_signal, noise, signal_power, noise_power, _ = awgn_channel(
-        signal, float(st.session_state.snr)
+    noisy_signal, noise, signal_power, noise_power, noise_sigma = awgn_channel(
+        modulated_signal,
+        float(st.session_state.snr),
     )
-    st.session_state.signal_power = float(signal_power)
-    st.session_state.noise_power = float(noise_power)
+    st.session_state.noisy_signal = noisy_signal
+    st.session_state.signal_power = signal_power
+    st.session_state.noise_power = noise_power
     st.session_state.configured_snr = float(st.session_state.snr)
-    st.session_state.actual_snr = float(actual_snr_db(signal, noise))
+    st.session_state.actual_snr = actual_snr_db(modulated_signal, noise)
 
-    recovered_bits, _ = demodulate_bfsk(
-        st.session_state.noisy_signal,
+    recovered_bits, scores = demodulate_bfsk(
+        noisy_signal,
         bitstream,
-        st.session_state.f0,
-        st.session_state.f1,
-        st.session_state.bit_rate,
-        st.session_state.sampling_rate,
+        float(st.session_state.f0),
+        float(st.session_state.f1),
+        float(st.session_state.bit_rate),
+        float(st.session_state.sampling_rate),
     )
     st.session_state.recovered_bits = recovered_bits
 
     ber, bit_errors, total_bits = compute_ber(bitstream, recovered_bits)
-    st.session_state.BER = float(ber)
-    st.session_state.bit_errors = int(bit_errors)
-    st.session_state.total_bits = int(total_bits)
-    st.session_state.baud_rate = float(compute_baud_rate(st.session_state.bit_rate))
-    st.session_state.bandwidth = float(
-        compute_bandwidth(st.session_state.f0, st.session_state.f1, st.session_state.bit_rate)
-    )
-    st.session_state.quality = transmission_quality(ber, float(st.session_state.snr))
+    st.session_state.BER = ber
+    st.session_state.bit_errors = bit_errors
+    st.session_state.total_bits = total_bits
 
-    recovered_temp, recovered_humidity = decode_recovered_sensor_data(recovered_bits)
-    st.session_state.recovered_temperature = int(recovered_temp)
-    st.session_state.recovered_humidity = int(recovered_humidity)
+    st.session_state.bandwidth = compute_bandwidth(
+        float(st.session_state.f0),
+        float(st.session_state.f1),
+        float(st.session_state.bit_rate),
+    )
+    st.session_state.baud_rate = compute_baud_rate(float(st.session_state.bit_rate))
+    st.session_state.quality = transmission_quality(ber, st.session_state.actual_snr)
+
+    rec_temp, rec_hum = decode_recovered_sensor_data(recovered_bits)
+    st.session_state.recovered_temperature = rec_temp
+    st.session_state.recovered_humidity = rec_hum
+
+    snr_sweep_results = run_snr_sweep(
+        bitstream=bitstream,
+        f0=float(st.session_state.f0),
+        f1=float(st.session_state.f1),
+        bit_rate=float(st.session_state.bit_rate),
+        sampling_rate=float(st.session_state.sampling_rate),
+        snr_values=list(range(0, 31, 2)),
+    )
+    st.session_state.SNR_results = snr_sweep_results
+
     st.session_state.analysis_results = {
-        "temp": temperature,
-        "humidity": humidity,
-        "bitstream": bitstream,
-        "recovered_bits": recovered_bits,
-        "signal": signal,
-        "noisy_signal": st.session_state.noisy_signal,
         "time_axis": time_axis,
-        "ber": ber,
-        "bit_errors": bit_errors,
-        "total_bits": total_bits,
+        "signal": modulated_signal,
+        "bitstream": bitstream,
     }
 
-    snr_levels = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30]
-    st.session_state.SNR_results = run_snr_sweep(
-        bitstream,
-        st.session_state.f0,
-        st.session_state.f1,
-        st.session_state.bit_rate,
-        st.session_state.sampling_rate,
-        snr_levels,
-    )
     st.session_state.simulation_ready = True
     return True
 
 
 def render_sidebar():
     with st.sidebar:
-        st.markdown(
+        render_html(
             f"""
             <div style="padding: 0.4rem 0.2rem;">
                 <div style="font-size: 1.25rem; font-weight: 700; color: #FFFFFF; line-height: 1.3;">
@@ -438,15 +516,11 @@ def render_sidebar():
                     {PROJECT_SUBTITLE.upper()}
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
-        st.markdown("<hr style='border-color: rgba(23, 59, 95, 0.6); margin: 0.8rem 0;'>", unsafe_allow_html=True)
-        st.markdown(
-            "<div style='font-size: 0.82rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.08em; margin-bottom: 0.4rem;'>SIMULATION STAGES</div>",
-            unsafe_allow_html=True,
-        )
+        render_html("<hr style='border: none; border-top: 1px solid rgba(23, 59, 95, 0.6); margin: 0.8rem 0;'>")
+        render_html("<div style='font-size: 0.82rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.08em; margin-bottom: 0.4rem;'>SIMULATION STAGES</div>")
 
         page_selected = st.radio(
             "Navigation",
@@ -458,11 +532,8 @@ def render_sidebar():
             st.session_state.page = page_selected
             st.rerun()
 
-        st.markdown("<hr style='border-color: rgba(23, 59, 95, 0.6); margin: 0.8rem 0;'>", unsafe_allow_html=True)
-        st.markdown(
-            "<div style='font-size: 0.82rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.08em; margin-bottom: 0.4rem;'>CHANNEL & RF CONFIG</div>",
-            unsafe_allow_html=True,
-        )
+        render_html("<hr style='border: none; border-top: 1px solid rgba(23, 59, 95, 0.6); margin: 0.8rem 0;'>")
+        render_html("<div style='font-size: 0.82rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.08em; margin-bottom: 0.4rem;'>CHANNEL & RF CONFIG</div>")
 
         st.number_input("Carrier f0 (Hz) [Bit 0]", min_value=10.0, step=100.0, key="f0")
         st.number_input("Carrier f1 (Hz) [Bit 1]", min_value=20.0, step=100.0, key="f1")
@@ -470,14 +541,14 @@ def render_sidebar():
         st.number_input("Sampling Rate (Hz)", min_value=100.0, step=500.0, key="sampling_rate")
         st.number_input("Wireless SNR (dB)", min_value=-20.0, max_value=50.0, step=1.0, key="snr")
 
-        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+        render_html("<div style='height: 8px;'></div>")
         if st.button("⚡ RE-RUN SIMULATION", use_container_width=True, key="sidebar_rerun"):
             run_full_simulation()
             st.rerun()
 
 
 def render_page_nav(prev_label: str, next_label: str, prev_page: str, next_page: str):
-    st.markdown("<div style='height: 22px;'></div>", unsafe_allow_html=True)
+    render_html("<div style='height: 22px;'></div>")
     col1, col2 = st.columns([1, 1])
     with col1:
         if st.button(f"← PREVIOUS: {prev_label}", use_container_width=True, key=f"nav_prev_{prev_page}"):
@@ -491,10 +562,10 @@ def render_page_nav(prev_label: str, next_label: str, prev_page: str, next_page:
 
 def render_sensor_status_grid():
     """Renders CURRENT SENSOR STATUS with proper, professional, well-proportioned values (not big)."""
-    st.markdown(
-        f"""
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem; margin-top: 0.6rem; margin-bottom: 0.8rem;">
-            <!-- Temperature Card -->
+    cols = st.columns(4)
+    with cols[0]:
+        render_html(
+            f"""
             <div class="glass-card-3d" style="padding: 0.95rem 1.15rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span style="font-size: 0.82rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.06em;">🌡️ TEMPERATURE</span>
@@ -505,8 +576,11 @@ def render_sensor_status_grid():
                 </div>
                 <div style="font-size: 0.75rem; color: #10B981; font-weight: 700;">● Nominal Calibration</div>
             </div>
-
-            <!-- Humidity Card -->
+            """
+        )
+    with cols[1]:
+        render_html(
+            f"""
             <div class="glass-card-3d" style="padding: 0.95rem 1.15rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span style="font-size: 0.82rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.06em;">💧 HUMIDITY</span>
@@ -517,8 +591,11 @@ def render_sensor_status_grid():
                 </div>
                 <div style="font-size: 0.75rem; color: #10B981; font-weight: 700;">● Ambient Environment</div>
             </div>
-
-            <!-- Reading Mode Card -->
+            """
+        )
+    with cols[2]:
+        render_html(
+            f"""
             <div class="glass-card-3d" style="padding: 0.95rem 1.15rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span style="font-size: 0.82rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.06em;">🎛️ ACQUISITION MODE</span>
@@ -529,8 +606,11 @@ def render_sensor_status_grid():
                 </div>
                 <div style="font-size: 0.75rem; color: #94A3B8;">● Dual-channel source</div>
             </div>
-
-            <!-- Timestamp Card -->
+            """
+        )
+    with cols[3]:
+        render_html(
+            f"""
             <div class="glass-card-3d" style="padding: 0.95rem 1.15rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span style="font-size: 0.82rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.06em;">🕒 TIMESTAMP</span>
@@ -541,10 +621,8 @@ def render_sensor_status_grid():
                 </div>
                 <div style="font-size: 0.75rem; color: #10B981; font-weight: 700;">● RTC Calibrated</div>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """
+        )
 
 
 def render_home():
@@ -552,7 +630,7 @@ def render_home():
         run_full_simulation()
 
     # 3D Hero Section
-    st.markdown(
+    render_html(
         f"""
         <div class="glass-card-3d" style="padding: 2.0rem; text-align: center; margin-bottom: 1.6rem; background: linear-gradient(145deg, rgba(14, 38, 70, 0.9), rgba(5, 14, 27, 0.95));">
             <div style="display: inline-block; background: rgba(0, 168, 255, 0.15); border: 1px solid rgba(0, 168, 255, 0.5); padding: 0.3rem 1.0rem; border-radius: 20px; font-size: 0.82rem; font-weight: 700; color: #00D9FF; letter-spacing: 0.12em; margin-bottom: 0.8rem;">
@@ -566,8 +644,7 @@ def render_home():
                 8-bit digital encoding, BFSK signal modulation, noisy AWGN wireless transmission, coherent demodulation, and bit error rate analysis.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     # 3D Quick Action Buttons
@@ -581,13 +658,13 @@ def render_home():
             st.session_state.page = "PERFORMANCE"
             st.rerun()
 
-    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+    render_html("<div style='height: 16px;'></div>")
 
-    # 3D Architecture Visual Diagram
-    st.markdown(
+    # 3D Architecture Visual Diagram - Header
+    render_html(
         """
-        <div class="glass-card-3d" style="padding: 1.6rem; margin-bottom: 1.6rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.1rem; flex-wrap: wrap; gap: 0.5rem;">
+        <div class="glass-card-3d" style="padding: 1.2rem 1.6rem; margin-bottom: 0.8rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
                 <div style="font-size: 1.2rem; font-weight: 700; color: #FFFFFF; letter-spacing: 0.04em;">
                     🌐 END-TO-END 3D SYSTEM ARCHITECTURE
                 </div>
@@ -595,111 +672,84 @@ def render_home():
                     BFSK TRANSMISSION PIPELINE
                 </div>
             </div>
-
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 0.9rem; text-align: center;">
-                <div style="background: rgba(8, 22, 42, 0.8); border: 1px solid rgba(0, 168, 255, 0.3); border-radius: 11px; padding: 1.0rem 0.75rem;">
-                    <div style="font-size: 1.6rem; margin-bottom: 0.3rem;">🌡️</div>
-                    <div style="font-size: 0.72rem; color: #00D9FF; font-weight: 700; letter-spacing: 0.08em;">STAGE 01</div>
-                    <div style="font-size: 1.0rem; font-weight: 700; color: #FFFFFF; margin-top: 0.2rem;">IoT Sensors</div>
-                    <div style="font-size: 0.8rem; color: #94A3B8; margin-top: 0.25rem;">Temp & Humidity Data</div>
-                </div>
-
-                <div style="background: rgba(8, 22, 42, 0.8); border: 1px solid rgba(0, 168, 255, 0.3); border-radius: 11px; padding: 1.0rem 0.75rem;">
-                    <div style="font-size: 1.6rem; margin-bottom: 0.3rem;">🔢</div>
-                    <div style="font-size: 0.72rem; color: #00D9FF; font-weight: 700; letter-spacing: 0.08em;">STAGE 02</div>
-                    <div style="font-size: 1.0rem; font-weight: 700; color: #FFFFFF; margin-top: 0.2rem;">Binary Framing</div>
-                    <div style="font-size: 0.8rem; color: #94A3B8; margin-top: 0.25rem;">16-bit Payload Stream</div>
-                </div>
-
-                <div style="background: rgba(8, 22, 42, 0.8); border: 1px solid rgba(0, 168, 255, 0.3); border-radius: 11px; padding: 1.0rem 0.75rem;">
-                    <div style="font-size: 1.6rem; margin-bottom: 0.3rem;">⚡</div>
-                    <div style="font-size: 0.72rem; color: #00D9FF; font-weight: 700; letter-spacing: 0.08em;">STAGE 03</div>
-                    <div style="font-size: 1.0rem; font-weight: 700; color: #FFFFFF; margin-top: 0.2rem;">BFSK Modulator</div>
-                    <div style="font-size: 0.8rem; color: #94A3B8; margin-top: 0.25rem;">Dual-tone f0 / f1 Carrier</div>
-                </div>
-
-                <div style="background: rgba(8, 22, 42, 0.8); border: 1px solid rgba(0, 168, 255, 0.3); border-radius: 11px; padding: 1.0rem 0.75rem;">
-                    <div style="font-size: 1.6rem; margin-bottom: 0.3rem;">〰️</div>
-                    <div style="font-size: 0.72rem; color: #00D9FF; font-weight: 700; letter-spacing: 0.08em;">STAGE 04</div>
-                    <div style="font-size: 1.0rem; font-weight: 700; color: #FFFFFF; margin-top: 0.2rem;">AWGN Channel</div>
-                    <div style="font-size: 0.8rem; color: #94A3B8; margin-top: 0.25rem;">Gaussian Noise Model</div>
-                </div>
-
-                <div style="background: rgba(8, 22, 42, 0.8); border: 1px solid rgba(0, 168, 255, 0.3); border-radius: 11px; padding: 1.0rem 0.75rem;">
-                    <div style="font-size: 1.6rem; margin-bottom: 0.3rem;">🎯</div>
-                    <div style="font-size: 0.72rem; color: #00D9FF; font-weight: 700; letter-spacing: 0.08em;">STAGE 05</div>
-                    <div style="font-size: 1.0rem; font-weight: 700; color: #FFFFFF; margin-top: 0.2rem;">BFSK Demodulator</div>
-                    <div style="font-size: 0.8rem; color: #94A3B8; margin-top: 0.25rem;">Coherent Correlator</div>
-                </div>
-
-                <div style="background: rgba(8, 22, 42, 0.8); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 11px; padding: 1.0rem 0.75rem;">
-                    <div style="font-size: 1.6rem; margin-bottom: 0.3rem;">📊</div>
-                    <div style="font-size: 0.72rem; color: #10B981; font-weight: 700; letter-spacing: 0.08em;">STAGE 06</div>
-                    <div style="font-size: 1.0rem; font-weight: 700; color: #FFFFFF; margin-top: 0.2rem;">Data Recovery</div>
-                    <div style="font-size: 0.8rem; color: #94A3B8; margin-top: 0.25rem;">Restored Sensor Readings</div>
-                </div>
-            </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
+
+    # 6-Stage Architecture Columns (Safe, Clean, Zero Code Block Glitch)
+    arch_cols = st.columns(6)
+    stages = [
+        ("🌡️", "#00D9FF", "STAGE 01", "IoT Sensors", "Temp & Humidity Data", "rgba(0,168,255,0.3)"),
+        ("🔢", "#00D9FF", "STAGE 02", "Binary Framing", "16-bit Payload Stream", "rgba(0,168,255,0.3)"),
+        ("⚡", "#00D9FF", "STAGE 03", "BFSK Modulator", "Dual-tone f0 / f1 Carrier", "rgba(0,168,255,0.3)"),
+        ("〰️", "#00D9FF", "STAGE 04", "AWGN Channel", "Gaussian Noise Model", "rgba(0,168,255,0.3)"),
+        ("🎯", "#00D9FF", "STAGE 05", "BFSK Demodulator", "Coherent Correlator", "rgba(0,168,255,0.3)"),
+        ("📊", "#10B981", "STAGE 06", "Data Recovery", "Restored Sensor Readings", "rgba(16,185,129,0.4)"),
+    ]
+    for col, (icon, label_color, stage, title, sub, border) in zip(arch_cols, stages):
+        with col:
+            render_html(
+                f"""
+                <div style="background: rgba(8, 22, 42, 0.8); border: 1px solid {border}; border-radius: 11px; padding: 1.0rem 0.75rem; text-align: center; height: 100%;">
+                    <div style="font-size: 1.6rem; margin-bottom: 0.3rem;">{icon}</div>
+                    <div style="font-size: 0.72rem; color: {label_color}; font-weight: 700; letter-spacing: 0.08em;">{stage}</div>
+                    <div style="font-size: 1.0rem; font-weight: 700; color: #FFFFFF; margin-top: 0.2rem;">{title}</div>
+                    <div style="font-size: 0.8rem; color: #94A3B8; margin-top: 0.25rem;">{sub}</div>
+                </div>
+                """
+            )
+
+    render_html("<div style='height: 16px;'></div>")
 
     # Live System Telemetry Metrics
-    st.markdown(
-        "<div style='font-size: 1.15rem; font-weight: 700; color: #FFFFFF; margin-bottom: 0.4rem;'>📡 LIVE TELEMETRY & SYSTEM METRICS</div>",
-        unsafe_allow_html=True,
-    )
+    render_html("<div style='font-size: 1.15rem; font-weight: 700; color: #FFFFFF; margin-bottom: 0.4rem;'>📡 LIVE TELEMETRY & SYSTEM METRICS</div>")
     metric_cols = st.columns(4)
     with metric_cols[0]:
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d" style="padding: 1.0rem;">
                 <div style="font-size: 0.78rem; color: #94A3B8; font-weight: 700;">TRANSMITTED TEMPERATURE</div>
                 <div style="font-size: 1.35rem; font-weight: 700; color: #00D9FF; margin-top: 0.25rem;">{st.session_state.temperature:.1f} °C</div>
                 <div style="font-size: 0.75rem; color: #10B981;">Recovered: {st.session_state.recovered_temperature} °C</div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
     with metric_cols[1]:
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d" style="padding: 1.0rem;">
                 <div style="font-size: 0.78rem; color: #94A3B8; font-weight: 700;">TRANSMITTED HUMIDITY</div>
                 <div style="font-size: 1.35rem; font-weight: 700; color: #10B981; margin-top: 0.25rem;">{st.session_state.humidity:.1f} %</div>
                 <div style="font-size: 0.75rem; color: #10B981;">Recovered: {st.session_state.recovered_humidity} %</div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
     with metric_cols[2]:
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d" style="padding: 1.0rem;">
                 <div style="font-size: 0.78rem; color: #94A3B8; font-weight: 700;">CHANNEL SNR</div>
                 <div style="font-size: 1.35rem; font-weight: 700; color: #F59E0B; margin-top: 0.25rem;">{st.session_state.snr:.1f} dB</div>
                 <div style="font-size: 0.75rem; color: #94A3B8;">Measured: {st.session_state.actual_snr:.2f} dB</div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
     with metric_cols[3]:
         ber_color = "#10B981" if st.session_state.BER == 0 else "#EF4444"
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d" style="padding: 1.0rem;">
                 <div style="font-size: 0.78rem; color: #94A3B8; font-weight: 700;">BIT ERROR RATE (BER)</div>
                 <div style="font-size: 1.35rem; font-weight: 700; color: {ber_color}; margin-top: 0.25rem;">{st.session_state.BER:.4f}</div>
                 <div style="font-size: 0.75rem; color: {ber_color};">Errors: {st.session_state.bit_errors} / {st.session_state.total_bits} bits</div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
-    st.markdown("<div style='height: 18px;'></div>", unsafe_allow_html=True)
+    render_html("<div style='height: 18px;'></div>")
 
     # Technical Specifications Overview Card
-    st.markdown(
+    render_html(
         f"""
         <div class="glass-card-3d" style="padding: 1.4rem;">
             <div style="font-size: 1.15rem; font-weight: 700; color: #FFFFFF; margin-bottom: 0.75rem;">
@@ -714,13 +764,12 @@ def render_home():
                 <div><span style="color:#94A3B8;">Estimated Bandwidth:</span> <b style="color:#10B981;">{st.session_state.bandwidth:.1f} Hz</b></div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
 def render_sensor_data():
-    st.markdown(
+    render_html(
         """
         <div style="margin-bottom: 1.2rem;">
             <div style="font-size: 1.85rem; font-weight: 700; color: #FFFFFF;">STAGE 01: SENSOR DATA ACQUISITION</div>
@@ -728,21 +777,20 @@ def render_sensor_data():
                 Acquire real-time environmental IoT telemetry or manually configure simulated sensor values.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        st.markdown(
+        render_html(
             """
             <div class="glass-card-3d" style="height: 100%;">
                 <div style="font-size: 1.15rem; font-weight: 700; color: #FFFFFF; margin-bottom: 0.75rem;">
                     📝 MANUAL SENSOR INPUT
                 </div>
-            """,
-            unsafe_allow_html=True,
+            </div>
+            """
         )
         st.number_input("Temperature (°C) [0 - 100]", min_value=0.0, max_value=100.0, step=0.5, key="temperature")
         st.number_input("Humidity (%) [0 - 100]", min_value=0.0, max_value=100.0, step=0.5, key="humidity")
@@ -756,10 +804,9 @@ def render_sensor_data():
                     st.rerun()
             else:
                 st.warning("Please enter valid temperature and humidity values (0-100).")
-        st.markdown("</div>", unsafe_allow_html=True)
 
     with col2:
-        st.markdown(
+        render_html(
             """
             <div class="glass-card-3d" style="height: 100%; display: flex; flex-direction: column; justify-content: space-between;">
                 <div>
@@ -770,8 +817,8 @@ def render_sensor_data():
                         Generate realistic dynamic environmental readings simulating physical DHT11 / DHT22 temperature and relative humidity sensors.
                     </div>
                 </div>
-            """,
-            unsafe_allow_html=True,
+            </div>
+            """
         )
         if st.button("⚡ GENERATE RANDOM SENSOR READING", use_container_width=True, key="btn_generate_sensor"):
             temp, hum = generate_sensor_reading()
@@ -782,13 +829,9 @@ def render_sensor_data():
             if run_full_simulation():
                 st.success(f"Simulated sensor reading generated: {temp}°C, {hum}%")
                 st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='height: 18px;'></div>", unsafe_allow_html=True)
-    st.markdown(
-        "<div style='font-size: 1.15rem; font-weight: 700; color: #FFFFFF;'>📊 CURRENT SENSOR STATUS (LIVE TELEMETRY)</div>",
-        unsafe_allow_html=True,
-    )
+    render_html("<div style='height: 18px;'></div>")
+    render_html("<div style='font-size: 1.15rem; font-weight: 700; color: #FFFFFF;'>📊 CURRENT SENSOR STATUS (LIVE TELEMETRY)</div>")
 
     # Render proper sized sensor status grid
     render_sensor_status_grid()
@@ -797,7 +840,7 @@ def render_sensor_data():
 
 
 def render_binary_conversion():
-    st.markdown(
+    render_html(
         """
         <div style="margin-bottom: 1.2rem;">
             <div style="font-size: 1.85rem; font-weight: 700; color: #FFFFFF;">STAGE 02: BINARY CONVERSION & FRAMING</div>
@@ -805,8 +848,7 @@ def render_binary_conversion():
                 Conversion of analog floating-point sensor telemetry into standard 8-bit unsigned digital bytes.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     if not st.session_state.simulation_ready:
@@ -814,11 +856,10 @@ def render_binary_conversion():
 
     temp_bits = format(int(round(st.session_state.temperature)) & 0xFF, "08b")
     hum_bits = format(int(round(st.session_state.humidity)) & 0xFF, "08b")
-    combined = st.session_state.binary_data or f"{temp_bits}{hum_bits}"
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d">
                 <div style="font-size: 0.82rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.06em;">BYTE 01: TEMPERATURE PAYLOAD</div>
@@ -827,12 +868,11 @@ def render_binary_conversion():
                     {temp_bits}
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
     with col2:
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d">
                 <div style="font-size: 0.82rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.06em;">BYTE 02: HUMIDITY PAYLOAD</div>
@@ -841,13 +881,12 @@ def render_binary_conversion():
                     {hum_bits}
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
-    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+    render_html("<div style='height: 14px;'></div>")
 
-    st.markdown(
+    render_html(
         f"""
         <div class="glass-card-3d">
             <div style="font-size: 0.85rem; font-weight: 700; color: #00D9FF; letter-spacing: 0.06em; margin-bottom: 0.4rem;">
@@ -862,15 +901,14 @@ def render_binary_conversion():
                 <span>Total Frame: 16 Bits</span>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     render_page_nav("SENSOR DATA", "BFSK MODULATION", "SENSOR DATA", "BFSK MODULATION")
 
 
 def render_fsk_modulation():
-    st.markdown(
+    render_html(
         """
         <div style="margin-bottom: 1.2rem;">
             <div style="font-size: 1.85rem; font-weight: 700; color: #FFFFFF;">STAGE 03: BFSK SIGNAL MODULATION</div>
@@ -878,8 +916,7 @@ def render_fsk_modulation():
                 Synthesis of continuous phase Binary Frequency Shift Keying waveform representing the digital telemetry stream.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     if not st.session_state.simulation_ready:
@@ -896,7 +933,7 @@ def render_fsk_modulation():
     )
     st.pyplot(fig)
 
-    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+    render_html("<div style='height: 10px;'></div>")
     cards = st.columns(4)
     params = [
         ("CARRIER FREQUENCY 0 (f0)", f"{st.session_state.f0:.1f} Hz", "Represents Logic '0'"),
@@ -906,22 +943,21 @@ def render_fsk_modulation():
     ]
     for i, (label, value, sub) in enumerate(params):
         with cards[i]:
-            st.markdown(
+            render_html(
                 f"""
                 <div class="glass-card-3d" style="padding: 0.95rem;">
                     <div style="font-size: 0.78rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.06em;">{label}</div>
                     <div style="font-size: 1.25rem; font-weight: 700; color: #FFFFFF; margin: 0.3rem 0 0.1rem 0;">{value}</div>
                     <div style="font-size: 0.75rem; color: #00D9FF;">{sub}</div>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
 
     render_page_nav("BINARY CONVERSION", "WIRELESS CHANNEL", "BINARY CONVERSION", "WIRELESS CHANNEL")
 
 
 def render_wireless_channel():
-    st.markdown(
+    render_html(
         """
         <div style="margin-bottom: 1.2rem;">
             <div style="font-size: 1.85rem; font-weight: 700; color: #FFFFFF;">STAGE 04: WIRELESS CHANNEL & AWGN NOISE</div>
@@ -929,8 +965,7 @@ def render_wireless_channel():
                 Physical propagation modeling: Additive White Gaussian Noise (AWGN) added to the modulated radio frequency waveform.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     if not st.session_state.simulation_ready:
@@ -948,7 +983,7 @@ def render_wireless_channel():
     )
     st.pyplot(fig)
 
-    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+    render_html("<div style='height: 10px;'></div>")
     metric_cols = st.columns(5)
     values = [
         ("TRANSMIT SIGNAL POWER", f"{st.session_state.signal_power:.4f} W", "Pure BFSK Power"),
@@ -959,22 +994,21 @@ def render_wireless_channel():
     ]
     for idx, (label, value, sub) in enumerate(values):
         with metric_cols[idx]:
-            st.markdown(
+            render_html(
                 f"""
                 <div class="glass-card-3d" style="padding: 0.95rem;">
                     <div style="font-size: 0.74rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.06em;">{label}</div>
                     <div style="font-size: 1.2rem; font-weight: 700; color: #FFFFFF; margin: 0.3rem 0 0.1rem 0;">{value}</div>
                     <div style="font-size: 0.74rem; color: #00D9FF;">{sub}</div>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
 
     render_page_nav("BFSK MODULATION", "DEMODULATION", "BFSK MODULATION", "DEMODULATION")
 
 
 def render_demodulation():
-    st.markdown(
+    render_html(
         """
         <div style="margin-bottom: 1.2rem;">
             <div style="font-size: 1.85rem; font-weight: 700; color: #FFFFFF;">STAGE 05: BFSK COHERENT DEMODULATION</div>
@@ -982,8 +1016,7 @@ def render_demodulation():
                 Correlation detection: Received noisy signal is matched against f0 and f1 reference carrier tones to reconstruct digital bits.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     if not st.session_state.simulation_ready:
@@ -994,7 +1027,7 @@ def render_demodulation():
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d">
                 <div style="font-size: 0.82rem; font-weight: 700; color: #00D9FF; letter-spacing: 0.06em;">ORIGINAL TRANSMITTED BITS (Tx)</div>
@@ -1002,12 +1035,11 @@ def render_demodulation():
                     {transmitted}
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
     with col2:
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d">
                 <div style="font-size: 0.82rem; font-weight: 700; color: #10B981; letter-spacing: 0.06em;">DEMODULATED RECOVERED BITS (Rx)</div>
@@ -1015,48 +1047,54 @@ def render_demodulation():
                     {recovered}
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
-    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+    render_html("<div style='height: 10px;'></div>")
     mismatches = [idx for idx, (tx, rx) in enumerate(zip(transmitted, recovered)) if tx != rx]
     if mismatches:
         st.warning(f"⚠️ {len(mismatches)} Bit Error(s) detected during wireless propagation at indices: {mismatches}")
     else:
         st.success("✅ 100% PERFECT DATA TRANSMISSION - Zero bit errors detected over the wireless channel!")
 
-    # Bit-by-bit correlation verification table (pure dashboard Times New Roman)
-    st.markdown(
+    # Bit-by-bit correlation verification table
+    render_html(
         """
-        <div class="glass-card-3d" style="margin-top: 0.8rem;">
-            <div style="font-size: 1.1rem; font-weight: 700; color: #FFFFFF; margin-bottom: 0.6rem;">
-                🔍 BIT-BY-BIT RECOVERY VERIFICATION TABLE
+        <div class="glass-card-3d" style="margin-top: 0.8rem; margin-bottom: 0.6rem;">
+            <div style="font-size: 1.1rem; font-weight: 700; color: #FFFFFF;">
+                🔍 BIT-BY-BIT RECOVERY VERIFICATION (16 BITS)
             </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    bit_table_html = "<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.5rem;'>"
-    for idx, (tx, rx) in enumerate(zip(transmitted, recovered)):
-        is_match = (tx == rx)
-        bg = "rgba(16, 185, 129, 0.12)" if is_match else "rgba(239, 68, 68, 0.2)"
-        border = "#10B981" if is_match else "#EF4444"
-        symbol = "✓ Match" if is_match else "✗ Error"
-        bit_table_html += f"""
-        <div style="background: {bg}; border: 1px solid {border}; border-radius: 8px; padding: 0.45rem; text-align: center;">
-            <div style="font-size: 0.72rem; color: #94A3B8;">Bit #{idx}</div>
-            <div style="font-size: 0.95rem; font-weight: 700; color: #FFFFFF;">Tx: {tx} ➔ Rx: {rx}</div>
-            <div style="font-size: 0.72rem; font-weight: 700; color: {border};">{symbol}</div>
         </div>
         """
-    bit_table_html += "</div></div>"
-    st.markdown(bit_table_html, unsafe_allow_html=True)
+    )
+    
+    # Render bit cards in 2 clean rows of 8 columns each (100% clean, responsive, no code block glitches)
+    for row_start in [0, 8]:
+        cols = st.columns(8)
+        for i in range(8):
+            idx = row_start + i
+            tx = transmitted[idx]
+            rx = recovered[idx]
+            is_match = (tx == rx)
+            bg = "rgba(16, 185, 129, 0.12)" if is_match else "rgba(239, 68, 68, 0.2)"
+            border = "#10B981" if is_match else "#EF4444"
+            symbol = "✓ Match" if is_match else "✗ Error"
+            with cols[i]:
+                render_html(
+                    f"""
+                    <div style="background: {bg}; border: 1px solid {border}; border-radius: 8px; padding: 0.45rem 0.2rem; text-align: center; margin-bottom: 0.4rem;">
+                        <div style="font-size: 0.72rem; color: #94A3B8;">Bit #{idx}</div>
+                        <div style="font-size: 0.95rem; font-weight: 700; color: #FFFFFF;">{tx} ➔ {rx}</div>
+                        <div style="font-size: 0.72rem; font-weight: 700; color: {border};">{symbol}</div>
+                    </div>
+                    """
+                )
 
     render_page_nav("WIRELESS CHANNEL", "SIGNAL ANALYSIS", "WIRELESS CHANNEL", "SIGNAL ANALYSIS")
 
 
 def render_signal_analysis():
-    st.markdown(
+    render_html(
         """
         <div style="margin-bottom: 1.2rem;">
             <div style="font-size: 1.85rem; font-weight: 700; color: #FFFFFF;">STAGE 06: MULTI-DOMAIN SIGNAL ANALYSIS</div>
@@ -1064,8 +1102,7 @@ def render_signal_analysis():
                 Comprehensive inspection of waveforms in time domain, digital logic levels, and frequency spectrum (FFT).
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     if not st.session_state.simulation_ready:
@@ -1091,7 +1128,7 @@ def render_signal_analysis():
 
 
 def render_performance():
-    st.markdown(
+    render_html(
         """
         <div style="margin-bottom: 1.2rem;">
             <div style="font-size: 1.85rem; font-weight: 700; color: #FFFFFF;">STAGE 07: SYSTEM PERFORMANCE & BER EVALUATION</div>
@@ -1099,8 +1136,7 @@ def render_performance():
                 Empirical Bit Error Rate (BER) analysis across SNR sweep from 0 dB to 30 dB.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     if not st.session_state.simulation_ready:
@@ -1109,7 +1145,7 @@ def render_performance():
     fig = plot_ber_curve(st.session_state.SNR_results)
     st.pyplot(fig)
 
-    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+    render_html("<div style='height: 10px;'></div>")
     perf_cols = st.columns(6)
     values = [
         ("BIT ERROR RATE", f"{st.session_state.BER:.5f}", "Measured BER"),
@@ -1121,18 +1157,17 @@ def render_performance():
     ]
     for idx, (label, value, sub) in enumerate(values):
         with perf_cols[idx]:
-            st.markdown(
+            render_html(
                 f"""
                 <div class="glass-card-3d" style="padding: 0.85rem;">
                     <div style="font-size: 0.72rem; font-weight: 700; color: #94A3B8; letter-spacing: 0.06em;">{label}</div>
                     <div style="font-size: 1.2rem; font-weight: 700; color: #FFFFFF; margin: 0.25rem 0 0.1rem 0;">{value}</div>
                     <div style="font-size: 0.72rem; color: #00D9FF;">{sub}</div>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
 
-    st.markdown(
+    render_html(
         f"""
         <div class="glass-card-3d" style="margin-top: 1.0rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.85rem;">
             <div>
@@ -1143,15 +1178,14 @@ def render_performance():
                 At current SNR of <b style="color: #FFFFFF;">{st.session_state.actual_snr:.2f} dB</b>, the transmission bit error performance matches standard BFSK theoretical bounds.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     render_page_nav("SIGNAL ANALYSIS", "FINAL RESULT", "SIGNAL ANALYSIS", "FINAL RESULT")
 
 
 def render_final_result():
-    st.markdown(
+    render_html(
         """
         <div style="margin-bottom: 1.2rem;">
             <div style="font-size: 1.85rem; font-weight: 700; color: #FFFFFF;">STAGE 08: FINAL TELEMETRY RECOVERY REPORT</div>
@@ -1159,8 +1193,7 @@ def render_final_result():
                 End-to-end verification comparing transmitted physical sensor telemetry against received and decoded values.
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
     if not st.session_state.simulation_ready:
@@ -1168,32 +1201,30 @@ def render_final_result():
 
     # Success / Failure Banner
     if st.session_state.bit_errors == 0:
-        st.markdown(
+        render_html(
             """
             <div class="glass-card-3d" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(6, 26, 18, 0.95) 100%); border-color: #10B981; padding: 1.2rem; text-align: center; margin-bottom: 1.2rem;">
                 <div style="font-size: 1.8rem;">🎉</div>
                 <div style="font-size: 1.35rem; font-weight: 700; color: #A7F3D0;">100% RECOVERY SUCCESSFUL</div>
                 <div style="font-size: 0.95rem; color: #CBD5E1; margin-top: 0.25rem;">All sensor readings were transmitted, modulated, propagated through noise, and perfectly recovered with zero errors.</div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
     else:
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d" style="background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(30, 8, 8, 0.95) 100%); border-color: #EF4444; padding: 1.2rem; text-align: center; margin-bottom: 1.2rem;">
                 <div style="font-size: 1.8rem;">⚠️</div>
                 <div style="font-size: 1.35rem; font-weight: 700; color: #FECACA;">CHANNEL NOISE DISTORTION DETECTED</div>
                 <div style="font-size: 0.95rem; color: #CBD5E1; margin-top: 0.25rem;">{st.session_state.bit_errors} bit error(s) occurred due to low SNR ({st.session_state.actual_snr:.2f} dB). Increase SNR for zero-error recovery.</div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
     # Side by side comparison: Transmitted vs Recovered
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d">
                 <div style="font-size: 1.15rem; font-weight: 700; color: #00D9FF; margin-bottom: 0.75rem;">
@@ -1206,12 +1237,11 @@ def render_final_result():
                     {st.session_state.binary_data}
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
     with col2:
-        st.markdown(
+        render_html(
             f"""
             <div class="glass-card-3d">
                 <div style="font-size: 1.15rem; font-weight: 700; color: #10B981; margin-bottom: 0.75rem;">
@@ -1224,11 +1254,10 @@ def render_final_result():
                     {st.session_state.recovered_bits}
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
 
-    st.markdown("<div style='height: 18px;'></div>", unsafe_allow_html=True)
+    render_html("<div style='height: 18px;'></div>")
 
     # 3D Action Controls
     col_b1, col_b2, col_b3 = st.columns(3)
