@@ -118,6 +118,14 @@ def inject_custom_css():
             -webkit-font-smoothing: antialiased;
         }
 
+        /* Preserve Google Material Icons / Symbols if loaded */
+        .material-icons,
+        .material-symbols-rounded,
+        .material-symbols-outlined,
+        [data-testid="stIconMaterial"] {
+            font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
+        }
+
         /* Dark High-Tech 3D Radial Background */
         html, body, [data-testid="stAppViewContainer"], .stApp {
             background-color: #030712 !important;
@@ -176,9 +184,9 @@ def inject_custom_css():
         }
 
         /* Completely hide the raw text ligature like keyboard_double_arrow_left */
-        [data-testid="stSidebarCollapseButton"] button > *,
-        [data-testid="collapsedControl"] button > *,
-        button[aria-label*="sidebar" i] > * {
+        [data-testid="stSidebarCollapseButton"] button *,
+        [data-testid="collapsedControl"] button *,
+        button[aria-label*="sidebar" i] * {
             font-size: 0px !important;
             color: transparent !important;
             visibility: hidden !important;
