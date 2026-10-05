@@ -1,5 +1,11 @@
 # IoT Sensor Data Transmission Using FSK over a Wireless Communication Link
 
+[![Live App](https://img.shields.io/badge/🚀%20Live%20Demo-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://iot-sensor-data-transmission.streamlit.app/)
+
+> **🌐 Live App:** [https://iot-sensor-data-transmission.streamlit.app/](https://iot-sensor-data-transmission.streamlit.app/)
+
+---
+
 ## Project Title
 IoT Sensor Data Transmission Using FSK over a Wireless Communication Link
 
